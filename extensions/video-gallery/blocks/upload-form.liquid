@@ -1,0 +1,30 @@
+{% schema %}
+{
+  "name": "Upload Form",
+  "target": "section",
+  "stylesheet": "upload-form.css",
+  "javascript": "upload-form.js",
+  "settings": [
+    { "type": "text", "id": "heading", "label": "Heading", "default": "Show Your Reaction" },
+    { "type": "text", "id": "subheading", "label": "Subheading", "default": "Upload a video to be featured!" }
+  ]
+}
+{% endschema %}
+
+<div class="syr-upload-container page-width">
+  <div class="syr-upload-card">
+    <h2 class="syr-heading">{{ block.settings.heading }}</h2>
+    <p class="syr-subheading">{{ block.settings.subheading }}</p>
+    
+    <form id="syr-upload-form" class="syr-form" enctype="multipart/form-data">
+      <div class="syr-input-group">
+        <label for="syr-video-file" class="syr-file-label">Choose Video</label>
+        <input type="file" id="syr-video-file" name="video" accept="video/*" required class="syr-file-input">
+      </div>
+      
+      <button type="submit" class="syr-submit-btn">Upload Reaction</button>
+    </form>
+    
+    <div id="syr-upload-status" class="syr-status"></div>
+  </div>
+</div>

@@ -1,0 +1,26 @@
+# Show Your Reaction - Task List
+
+- [x] **Planning**
+    - [x] Explore existing project structure <!-- id: 0 -->
+    - [x] Create implementation plan <!-- id: 1 -->
+- [x] **Setup & Configuration**
+    - [x] Install dependencies (MongoDB, Google Drive) <!-- id: 2 -->
+    - [x] Configure environment variables <!-- id: 3 -->
+    - [x] Setup Database Connection (MongoDB) <!-- id: 4 -->
+    - [x] Setup MongoDB GridFS Storage (NO EXTERNAL SERVICE NEEDED) <!-- id: 5 -->
+- [x] **Backend Development**
+    - [x] Create Video Model (MongoDB) <!-- id: 6 -->
+    - [x] Implement Video Upload Endpoint (Storefront) <!-- id: 7 -->
+    - [x] Implement Admin API (List, Approve, Delete) <!-- id: 8 -->
+- [x] **Frontend Development (Storefront)**
+    - [x] Create Video Upload Section/Proxy <!-- id: 9 -->
+    - [x] Create Video Gallery Section <!-- id: 10 -->
+- [x] **Admin UI Development**
+    - [x] Create Dashboard for Video Management <!-- id: 11 -->
+    - [x] Implement Approve/Delete Actions <!-- id: 12 -->
+- [x] **Verification**
+    - [x] Test Upload Flow <!-- id: 13 -->
+    - [x] Test Admin Approval Flow <!-- id: 14 -->
+    - [x] Test Video Display on Storefront <!-- id: 15 -->
+    - [x] Create Walkthrough <!-- id: 16 -->
+    - [x] Update Documentation for GridFS <!-- id: 17 -->

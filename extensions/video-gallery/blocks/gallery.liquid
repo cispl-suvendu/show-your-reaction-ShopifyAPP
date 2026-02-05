@@ -1,0 +1,18 @@
+{% schema %}
+{
+  "name": "Video Gallery",
+  "target": "section",
+  "stylesheet": "gallery.css",
+  "javascript": "gallery.js",
+  "settings": [
+      { "type": "text", "id": "heading", "label": "Heading", "default": "Community Reactions" }
+  ]
+}
+{% endschema %}
+
+<div class="syr-gallery-container page-width">
+    <h2 class="syr-heading">{{ block.settings.heading }}</h2>
+    <div id="syr-gallery-grid" class="syr-gallery-grid">
+        <div class="syr-loading">Loading videos...</div>
+    </div>
+</div>
