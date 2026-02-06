@@ -1,8 +1,10 @@
 import { json, unstable_composeUploadHandlers, unstable_createMemoryUploadHandler, unstable_parseMultipartFormData } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { uploadFileToGridFS } from "../services/gridfs.server";
+import { generateThumbnail } from "../services/thumbnail.server";
 import Video from "../models/video.server";
 import connection from "../db.server";
+import { title } from "process";
 
 export const loader = async ({ request }) => {
     await authenticate.public.appProxy(request);
@@ -10,9 +12,22 @@ export const loader = async ({ request }) => {
 
     const videos = await Video.find({ status: 'approved' })
         .sort({ createdAt: -1 })
-        .select('fileId shop thumbnailLink webContentLink');
+        .select('fileId thumbnailLink webContentLink webViewLink uploaderName');
 
-    return json({ videos });
+    // Format videos for storefront consumption
+    const formattedVideos = videos.map(v => ({
+        fileId: v.fileId,
+        // Convert /api/videos to /apps/videos for storefront (proxy)
+        // Or if null, generate the link
+        thumbnailLink: v.thumbnailLink ? v.thumbnailLink.replace('/api/videos/', '/apps/videos/') : `/apps/videos/thumb_${v.id}.jpg`,
+
+        // Video link conversion
+        webContentLink: (v.webContentLink || v.webViewLink || '').replace('/api/videos/', '/apps/videos/'),
+        webViewLink: (v.webViewLink || v.webContentLink || '').replace('/api/videos/', '/apps/videos/'),
+        uploaderName: (v.uploaderName || 'Untitled Video')
+    }));
+
+    return json({ videos: formattedVideos });
 };
 
 export const action = async ({ request }) => {
@@ -28,9 +43,20 @@ export const action = async ({ request }) => {
                 for await (const chunk of data) chunks.push(chunk);
                 const buffer = Buffer.concat(chunks);
 
+                // Upload video to GridFS
                 const gridFSFile = await uploadFileToGridFS(buffer, filename, contentType);
+
+                // Generate thumbnail
+                const thumbnail = await generateThumbnail(buffer, filename);
+
+                // Combine video and thumbnail data
+                const fileData = {
+                    ...gridFSFile,
+                    thumbnailLink: thumbnail.thumbnailLink
+                };
+
                 // Return JSON string
-                return JSON.stringify(gridFSFile);
+                return JSON.stringify(fileData);
             },
             unstable_createMemoryUploadHandler()
         );
@@ -53,12 +79,21 @@ export const action = async ({ request }) => {
             fileData = { id: fileDataString };
         }
 
+        const uploaderName = formData.get("name");
+        const uploaderEmail = formData.get("email");
+
+        if (!uploaderName || !uploaderEmail) {
+            return json({ error: "Name and email are required" }, { status: 400 });
+        }
+
         await Video.create({
             shop,
             fileId: fileData.id,
             webContentLink: fileData.webContentLink,
             webViewLink: fileData.webViewLink,
             thumbnailLink: fileData.thumbnailLink,
+            uploaderName,
+            uploaderEmail,
             status: 'pending'
         });
 

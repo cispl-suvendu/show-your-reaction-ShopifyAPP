@@ -32,13 +32,12 @@ export const uploadFileToGridFS = async (buffer, filename, mimeType) => {
         readableStream.pipe(uploadStream)
             .on('error', reject)
             .on('finish', () => {
-                // GridFS doesn't auto-generate thumbnails or public links
-                // We'll create our own endpoint to serve these files
+                // Use standard API path
                 resolve({
                     id: uploadStream.id.toString(),
                     webContentLink: `/api/videos/${uploadStream.id.toString()}`,
                     webViewLink: `/api/videos/${uploadStream.id.toString()}`,
-                    thumbnailLink: null // No auto thumbnails in GridFS
+                    thumbnailLink: null // No auto thumbnails in GridFS,
                 });
             });
     });

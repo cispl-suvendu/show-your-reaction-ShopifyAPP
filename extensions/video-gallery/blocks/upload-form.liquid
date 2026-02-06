@@ -18,7 +18,17 @@
     
     <form id="syr-upload-form" class="syr-form" enctype="multipart/form-data">
       <div class="syr-input-group">
-        <label for="syr-video-file" class="syr-file-label">Choose Video</label>
+        <label for="syr-name" class="syr-label">Your Name *</label>
+        <input type="text" id="syr-name" name="name" required class="syr-text-input" placeholder="Enter your name">
+      </div>
+      
+      <div class="syr-input-group">
+        <label for="syr-email" class="syr-label">Your Email *</label>
+        <input type="email" id="syr-email" name="email" required class="syr-text-input" placeholder="Enter your email">
+      </div>
+      
+      <div class="syr-input-group">
+        <label for="syr-video-file" class="syr-file-label">Choose Video *</label>
         <input type="file" id="syr-video-file" name="video" accept="video/*" required class="syr-file-input">
       </div>
       

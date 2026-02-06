@@ -13,6 +13,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
+            console.log('Fetched videos:', data);
+
             grid.innerHTML = videos.map(video => `
                 <div class="syr-video-card">
                     <div class="syr-thumbnail-wrapper">
@@ -20,6 +22,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     `<img src="${video.thumbnailLink}" alt="Video Thumbnail" loading="lazy" />` :
                     `<div class="syr-placeholder">Video</div>`
                 }
+                    </div>
+                    <div class="syr-card-content">
+                        <h3 class="syr-video-title">Uploaded by: ${video.uploaderName}</h3>
                     </div>
                     <div class="syr-card-actions">
                         <a href="${video.webContentLink}" target="_blank" class="syr-watch-btn">Watch</a>
