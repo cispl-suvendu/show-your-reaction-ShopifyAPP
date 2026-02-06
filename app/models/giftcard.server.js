@@ -63,6 +63,11 @@ export async function createShopifyGiftCard({
   `;
 
   try {
+    console.log("GraphQL Mutation Request:", {
+      query: mutation,
+      variables: { input: { initialBalance: initialBalance, currencyCode: currency } }
+    });
+    
     const response = await shopifyClient(mutation, {
       variables: {
         input: {
@@ -74,10 +79,44 @@ export async function createShopifyGiftCard({
       },
     });
 
-    if (response.data.giftCardCreate.userErrors.length > 0) {
-      const errors = response.data.giftCardCreate.userErrors;
+    console.log("GraphQL Response received:", {
+      hasErrors: !!response.errors,
+      hasData: !!response.data,
+      dataKeys: response.data ? Object.keys(response.data) : null
+    });
+
+    // Check for GraphQL-level errors
+    if (response.errors) {
+      console.error("❌ GraphQL Errors (API Level):");
+      response.errors.forEach((error, index) => {
+        console.error(`  Error ${index + 1}:`, error.message);
+        if (error.extensions) {
+          console.error(`    Code: ${error.extensions.code}`);
+          console.error(`    Details:`, error.extensions);
+        }
+      });
       throw new Error(
-        `Shopify API Error: ${errors.map((e) => e.message).join(", ")}`
+        `GraphQL Error: ${response.errors.map((e) => e.message).join(", ")}`
+      );
+    }
+
+    // Check for mutation-level errors
+    const giftCardCreateResult = response.data?.giftCardCreate;
+    if (!giftCardCreateResult) {
+      console.error("❌ No giftCardCreate result in response");
+      console.error("Response data keys:", Object.keys(response.data || {}));
+      throw new Error("No giftCardCreate data in response");
+    }
+
+    if (giftCardCreateResult.userErrors && giftCardCreateResult.userErrors.length > 0) {
+      console.error("❌ Shopify User Errors (Mutation Level):");
+      giftCardCreateResult.userErrors.forEach((error, index) => {
+        console.error(`  Error ${index + 1}:`, error.message);
+        console.error(`    Code: ${error.code}`);
+        console.error(`    Field: ${error.field}`);
+      });
+      throw new Error(
+        `Shopify API Error: ${giftCardCreateResult.userErrors.map((e) => e.message).join(", ")}`
       );
     }
 
