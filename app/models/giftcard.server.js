@@ -48,10 +48,6 @@ export async function createShopifyGiftCard({
         giftCard {
           id
           lastCharacters
-          initialBalance {
-            amount
-            currencyCode
-          }
         }
         userErrors {
           code
@@ -125,8 +121,8 @@ export async function createShopifyGiftCard({
     return {
       id: giftCard.id,
       lastCharacters: giftCard.lastCharacters,
-      initialBalance: giftCard.initialBalance.amount,
-      currencyCode: giftCard.initialBalance.currencyCode,
+      initialBalance: initialBalance,
+      currencyCode: currency,
     };
   } catch (error) {
     console.error("Failed to create Shopify gift card:", error);
