@@ -14,6 +14,11 @@ const VideoSchema = new mongoose.Schema({
         enum: ['pending', 'approved', 'rejected'],
         default: 'pending'
     },
+    // Gift card reward fields
+    giftCardCreated: { type: Boolean, default: false },
+    giftCardId: { type: String }, // Reference to GiftCard model
+    giftCardEmailSent: { type: Boolean, default: false },
+    approvedAt: { type: Date },
     createdAt: { type: Date, default: Date.now },
 });
 

@@ -1,5 +1,57 @@
 # @shopify/shopify-app-template-remix
 
+## 2026.02.06 - Gift Card Reward Feature
+
+**Major Feature Addition**: Shopify Gift Card Rewards System
+
+### New Features
+- ✅ Automatic gift card creation when videos are approved
+- ✅ SMTP email delivery with professional templates
+- ✅ Gift card admin dashboard
+- ✅ Email delivery tracking
+- ✅ Complete MongoDB tracking
+
+### New Files
+- `app/services/email.server.js` - SMTP email service (350 lines)
+- `app/models/giftcard.server.js` - Gift card model (280 lines)
+- `app/routes/app.gift-cards.jsx` - Admin page (120 lines)
+- `QUICK_START.md` - Quick setup guide
+- `GIFT_CARD_IMPLEMENTATION.md` - Implementation details
+- `IMPLEMENTATION_COMPLETE.md` - Completion report
+- `IMPLEMENTATION_OVERVIEW.md` - Overview summary
+
+### Enhanced Files
+- `app/models/video.server.js` - Added gift card tracking fields
+- `app/routes/app._index.jsx` - Integrated gift card workflow
+- `docs/DEVELOPER_GUIDE.md` - Complete rewrite with gift card info
+- `docs/IMPLEMENTATION_PLAN.md` - Full architecture documentation
+- `docs/WALKTHROUGH.md` - Enhanced testing procedures
+- `docs/TASK.md` - Updated task list
+- `README.md` - Updated with gift card feature
+- `package.json` - Added nodemailer dependency
+
+### New Dependencies
+- `nodemailer@^6.9.7` - SMTP email delivery
+
+### New Environment Variables
+- `ENABLE_GIFT_CARDS` - Feature toggle
+- `ENABLE_GIFT_CARD_EMAIL` - Email toggle
+- `GIFT_CARD_AMOUNT` - Card amount
+- `GIFT_CARD_CURRENCY` - Currency
+- `SHOPIFY_SHOP_NAME` - Store name
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE` - SMTP config
+- `SMTP_USER`, `SMTP_PASS` - SMTP auth
+- `SMTP_FROM_EMAIL`, `SMTP_REPLY_TO` - Email addresses
+
+### Breaking Changes
+- ❌ **NONE** - Fully backward compatible
+
+### Migration Guide
+- No migration needed
+- All changes are additive
+- Enable feature with environment variables
+- See QUICK_START.md for setup
+
 ## 2025.12.11
 
 - [#1201](https://github.com/Shopify/shopify-app-template-remix/pull/1201) Update `@shopify/shopify-app-remix` to v4.1.0 and `@shopify/shopify-app-session-storage-prisma` to v8.0.0, add refresh token fields (`refreshToken` and `refreshTokenExpires`) to Session model in Prisma schema, and adopt the `expiringOfflineAccessTokens` flag for enhanced security through token rotation. See [expiring vs non-expiring offline tokens](https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/offline-access-tokens#expiring-vs-non-expiring-offline-tokens) for more information.

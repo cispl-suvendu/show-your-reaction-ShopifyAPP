@@ -22,6 +22,9 @@ export default function App() {
         <Link to="/app" rel="home">
           Home
         </Link>
+        <Link to="/app/gift-cards" rel="Gift Cards">
+          Gift Cards
+        </Link>
       </NavMenu>
       <Outlet />
     </AppProvider>
