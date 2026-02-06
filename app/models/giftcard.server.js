@@ -67,10 +67,7 @@ export async function createShopifyGiftCard({
     const response = await shopifyClient(mutation, {
       variables: {
         input: {
-          initialValue: {
-            amount: initialBalance.toString(),
-            currencyCode: currency,
-          },
+          initialValue: initialBalance.toString(),
         },
       },
     });
