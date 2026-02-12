@@ -1,21 +1,20 @@
 import mongoose from "mongoose";
 
-// Gift Card schema for tracking created gift cards
 const GiftCardSchema = new mongoose.Schema({
   shop: { type: String, required: true },
-  videoId: { type: String, required: true }, // Reference to the approved video
+  videoId: { type: String, required: true },
   uploaderEmail: { type: String, required: true },
   uploaderName: { type: String, required: true },
-  shopifyGiftCardId: { type: String, required: true }, // Shopify's internal ID
-  giftCardCode: { type: String, required: true }, // The code to use
-  giftCardValue: { type: Number, required: true }, // Value in cents
+  shopifyGiftCardId: { type: String, required: true },
+  giftCardCode: { type: String },
+  lastCharacters: { type: String },
+  giftCardValue: { type: Number, required: true },
   currency: { type: String, default: "USD" },
   emailSent: { type: Boolean, default: false },
   emailSentAt: { type: Date },
   createdAt: { type: Date, default: Date.now },
 });
 
-// Use existing model if defined (hmr safe)
 const GiftCard =
   mongoose.models.GiftCard || mongoose.model("GiftCard", GiftCardSchema);
 
@@ -23,16 +22,13 @@ export default GiftCard;
 
 /**
  * Create a gift card via Shopify Admin API
- * @param {Object} params
- * @param {Object} params.shopifyClient - Authenticated Shopify GraphQL client function
- * @param {number} params.initialBalance - Gift card balance in dollars
- * @param {string} params.currency - Currency code (default: USD)
- * @returns {Promise<Object>} - Gift card details {id, code}
  */
 export async function createShopifyGiftCard({
   shopifyClient,
   initialBalance,
   currency = "USD",
+  note = "Promotional gift card",
+  customerId = null,
 }) {
   if (!shopifyClient) {
     throw new Error("Shopify client is required to create a gift card");
@@ -48,6 +44,11 @@ export async function createShopifyGiftCard({
         giftCard {
           id
           lastCharacters
+          initialValue {
+            amount
+            currencyCode
+          }
+          createdAt
         }
         userErrors {
           code
@@ -59,162 +60,241 @@ export async function createShopifyGiftCard({
   `;
 
   try {
-    console.log("GraphQL Mutation Request:", {
-      query: mutation,
-      variables: { input: { initialBalance: initialBalance, currencyCode: currency } }
-    });
+    const input = {
+      initialValue: initialBalance.toString(),
+      note: note,
+    };
+
+    if (customerId) {
+      input.customerId = customerId;
+    }
+
+    const variables = { input };
     
-    const response = await shopifyClient(mutation, {
-      variables: {
-        input: {
-          initialValue: initialBalance.toString(),
-        },
-      },
-    });
+    console.log("📤 Creating gift card with variables:", JSON.stringify(variables, null, 2));
 
-    console.log("GraphQL Response received:", {
-      hasErrors: !!response.errors,
-      hasData: !!response.data,
-      dataKeys: response.data ? Object.keys(response.data) : null
-    });
+    // Call the GraphQL client and await the response
+    const response = await shopifyClient(mutation, { variables });
+    
+    console.log("📥 Response type:", typeof response);
+    console.log("📥 Response is Response object:", response instanceof Response);
+    
+    // If it's a Response object, we need to parse the JSON
+    let data;
+    if (response instanceof Response || response.json) {
+      console.log("🔄 Parsing JSON from Response object...");
+      data = await response.json();
+      console.log("✅ Parsed JSON data:", JSON.stringify(data, null, 2));
+    } else {
+      // Already parsed
+      data = response;
+      console.log("✅ Using direct response data:", JSON.stringify(data, null, 2));
+    }
 
-    // Check for GraphQL-level errors
-    if (response.errors) {
-      console.error("❌ GraphQL Errors (API Level):");
-      response.errors.forEach((error, index) => {
-        console.error(`  Error ${index + 1}:`, error.message);
-        if (error.extensions) {
-          console.error(`    Code: ${error.extensions.code}`);
-          console.error(`    Details:`, error.extensions);
-        }
-      });
+    // Check for GraphQL errors
+    if (data.errors) {
+      console.error("❌ GraphQL Errors:", data.errors);
       throw new Error(
-        `GraphQL Error: ${response.errors.map((e) => e.message).join(", ")}`
+        `GraphQL Error: ${data.errors.map((e) => e.message).join(", ")}`
       );
     }
 
-    // Check for mutation-level errors
-    const giftCardCreateResult = response.data?.giftCardCreate;
+    // Get the result
+    const giftCardCreateResult = data.data?.giftCardCreate;
+    
     if (!giftCardCreateResult) {
-      console.error("❌ No giftCardCreate result in response");
-      console.error("Response data keys:", Object.keys(response.data || {}));
+      console.error("❌ No giftCardCreate in response");
+      console.error("Response data:", JSON.stringify(data, null, 2));
       throw new Error("No giftCardCreate data in response");
     }
 
-    if (giftCardCreateResult.userErrors && giftCardCreateResult.userErrors.length > 0) {
-      console.error("❌ Shopify User Errors (Mutation Level):");
-      giftCardCreateResult.userErrors.forEach((error, index) => {
-        console.error(`  Error ${index + 1}:`, error.message);
-        console.error(`    Code: ${error.code}`);
-        console.error(`    Field: ${error.field}`);
-      });
+    if (giftCardCreateResult.userErrors?.length > 0) {
+      console.error("❌ Shopify User Errors:", giftCardCreateResult.userErrors);
       throw new Error(
-        `Shopify API Error: ${giftCardCreateResult.userErrors.map((e) => e.message).join(", ")}`
+        `Shopify API Error: ${giftCardCreateResult.userErrors
+          .map((e) => e.message)
+          .join(", ")}`
       );
     }
 
-    const giftCard = response.data.giftCardCreate.giftCard;
+    const giftCard = giftCardCreateResult.giftCard;
+
+    if (!giftCard) {
+      throw new Error("Gift card creation failed - no gift card returned");
+    }
+
+    console.log("✅ Gift card created successfully:", {
+      id: giftCard.id,
+      lastCharacters: giftCard.lastCharacters,
+    });
 
     return {
       id: giftCard.id,
       lastCharacters: giftCard.lastCharacters,
-      initialBalance: initialBalance,
-      currencyCode: currency,
+      initialValue: giftCard.initialValue?.amount || initialBalance,
+      currencyCode: giftCard.initialValue?.currencyCode || currency,
     };
   } catch (error) {
-    console.error("Failed to create Shopify gift card:", error);
+    console.error("❌ Failed to create Shopify gift card:", error.message);
     throw error;
   }
 }
 
 /**
- * Resend gift card code for a gift card
- * Shopify requires a separate API call to generate/resend the code
- * @param {Object} params
- * @param {Object} params.shopifyClient - Authenticated Shopify GraphQL client function
- * @param {string} params.giftCardId - Shopify gift card ID (gid format)
- * @returns {Promise<string>} - The gift card code
+ * Find or create a Shopify customer by email
  */
-export async function resendGiftCardCode({
+export async function findOrCreateCustomer({
   shopifyClient,
-  giftCardId,
+  email,
+  firstName = "",
+  lastName = "",
 }) {
-  if (!shopifyClient) {
-    throw new Error("Shopify client is required");
+  if (!shopifyClient || !email) {
+    return null;
   }
-
-  if (!giftCardId) {
-    throw new Error("Gift card ID is required");
-  }
-
-  const query = `
-    query GetGiftCard($id: ID!) {
-      giftCard(id: $id) {
-        id
-        code
-        lastCharacters
-        initialBalance {
-          amount
-          currencyCode
-        }
-      }
-    }
-  `;
 
   try {
-    const response = await shopifyClient(query, {
+    const searchQuery = `
+      query SearchCustomer($query: String!) {
+        customers(first: 1, query: $query) {
+          edges {
+            node {
+              id
+              email
+            }
+          }
+        }
+      }
+    `;
+
+    console.log("🔍 Searching for customer:", email);
+
+    const response = await shopifyClient(searchQuery, {
+      variables: { query: `email:${email}` },
+    });
+
+    // Parse response if needed
+    let data;
+    if (response instanceof Response || response.json) {
+      data = await response.json();
+    } else {
+      data = response;
+    }
+
+    const existingCustomer = data.data?.customers?.edges?.[0]?.node;
+
+    if (existingCustomer) {
+      console.log("✅ Found existing customer:", existingCustomer.id);
+      return existingCustomer.id;
+    }
+
+    console.log("📝 Creating new customer for:", email);
+    
+    const createMutation = `
+      mutation CreateCustomer($input: CustomerInput!) {
+        customerCreate(input: $input) {
+          customer {
+            id
+            email
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const createResponse = await shopifyClient(createMutation, {
       variables: {
-        id: giftCardId,
+        input: {
+          email: email,
+          firstName: firstName || email.split('@')[0],
+          lastName: lastName || "",
+        },
       },
     });
 
-    if (response.errors) {
-      throw new Error(response.errors[0].message);
+    // Parse response if needed
+    let createData;
+    if (createResponse instanceof Response || createResponse.json) {
+      createData = await createResponse.json();
+    } else {
+      createData = createResponse;
+    }
+    
+    if (createData.data?.customerCreate?.userErrors?.length > 0) {
+      console.error("❌ Customer creation errors:", createData.data.customerCreate.userErrors);
+      return null;
     }
 
-    const giftCard = response.data.giftCard;
-    if (!giftCard) {
-      throw new Error("Gift card not found");
+    const newCustomer = createData.data?.customerCreate?.customer;
+    if (newCustomer) {
+      console.log("✅ Created new customer:", newCustomer.id);
+      return newCustomer.id;
     }
 
-    // If code exists, return it
-    if (giftCard.code) {
-      return giftCard.code;
-    }
-
-    // Note: In recent Shopify API versions, the code is automatically generated
-    // If not available, we may need to use a different endpoint or approach
-    console.warn(
-      "Gift card code not immediately available. It should be generated by Shopify."
-    );
-
-    return `*${giftCard.lastCharacters}`;
+    return null;
   } catch (error) {
-    console.error("Failed to get gift card code:", error);
-    throw error;
+    console.error("❌ Failed to find/create customer:", error);
+    return null;
   }
 }
 
 /**
- * Save gift card record to database
- * @param {Object} params
- * @param {string} params.shop - Shopify shop domain
- * @param {string} params.videoId - Video ID
- * @param {string} params.uploaderEmail - Uploader email
- * @param {string} params.uploaderName - Uploader name
- * @param {string} params.shopifyGiftCardId - Shopify gift card ID
- * @param {string} params.giftCardCode - Gift card code
- * @param {number} params.giftCardValue - Value in cents
- * @param {string} params.currency - Currency code
- * @returns {Promise<Object>} - Saved gift card record
+ * Get gift card code using REST Admin API
  */
+export async function getGiftCardCodeREST({
+  shop,
+  accessToken,
+  giftCardId,
+}) {
+  const numericId = giftCardId.includes('gid://') 
+    ? giftCardId.split('/').pop() 
+    : giftCardId;
+
+  const url = `https://${shop}/admin/api/2024-01/gift_cards/${numericId}.json`;
+
+  try {
+    console.log(`🔍 Fetching gift card code from REST API...`);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ REST API Error: ${response.status}`, errorText);
+      throw new Error(`REST API Error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    
+    console.log("✅ Gift card code retrieved:", data.gift_card.code);
+
+    return {
+      code: data.gift_card.code,
+      balance: data.gift_card.balance,
+      lastCharacters: data.gift_card.last_characters,
+    };
+  } catch (error) {
+    console.error("❌ Failed to get gift card code via REST:", error);
+    throw error;
+  }
+}
+
 export async function saveGiftCardRecord({
   shop,
   videoId,
   uploaderEmail,
   uploaderName,
   shopifyGiftCardId,
-  giftCardCode,
+  giftCardCode = null,
+  lastCharacters,
   giftCardValue,
   currency = "USD",
 }) {
@@ -226,6 +306,7 @@ export async function saveGiftCardRecord({
       uploaderName,
       shopifyGiftCardId,
       giftCardCode,
+      lastCharacters,
       giftCardValue,
       currency,
     });
@@ -233,17 +314,27 @@ export async function saveGiftCardRecord({
     console.log(`✅ Gift card record saved: ${giftCard._id}`);
     return giftCard;
   } catch (error) {
-    console.error("Failed to save gift card record:", error);
+    console.error("❌ Failed to save gift card record:", error);
     throw error;
   }
 }
 
-/**
- * Update gift card record to mark email as sent
- * @param {string} giftCardId - Database gift card ID
- * @param {boolean} success - Whether email was sent successfully
- * @returns {Promise<Object>}
- */
+export async function updateGiftCardCode(giftCardDbId, code) {
+  try {
+    const giftCard = await GiftCard.findByIdAndUpdate(
+      giftCardDbId,
+      { giftCardCode: code },
+      { new: true }
+    );
+
+    console.log(`✅ Gift card code updated`);
+    return giftCard;
+  } catch (error) {
+    console.error("❌ Failed to update gift card code:", error);
+    throw error;
+  }
+}
+
 export async function markGiftCardEmailSent(giftCardId, success = true) {
   try {
     const update = {
@@ -255,44 +346,31 @@ export async function markGiftCardEmailSent(giftCardId, success = true) {
       new: true,
     });
 
+    console.log(`✅ Gift card email status updated: ${success}`);
     return giftCard;
   } catch (error) {
-    console.error("Failed to update gift card email status:", error);
+    console.error("❌ Failed to update gift card email status:", error);
     throw error;
   }
 }
 
-/**
- * Get gift card by video ID
- * @param {string} videoId
- * @returns {Promise<Object|null>}
- */
 export async function getGiftCardByVideoId(videoId) {
   try {
     return await GiftCard.findOne({ videoId });
   } catch (error) {
-    console.error("Failed to find gift card:", error);
+    console.error("❌ Failed to find gift card:", error);
     return null;
   }
 }
 
-/**
- * Get all gift cards for a shop
- * @param {string} shop
- * @param {Object} options - Query options {limit, skip, sort}
- * @returns {Promise<Array>}
- */
-export async function getShopGiftCards(
-  shop,
-  options = { limit: 100, skip: 0 }
-) {
+export async function getShopGiftCards(shop, options = { limit: 100, skip: 0 }) {
   try {
     return await GiftCard.find({ shop })
       .sort({ createdAt: -1 })
       .limit(options.limit)
       .skip(options.skip);
   } catch (error) {
-    console.error("Failed to fetch gift cards:", error);
+    console.error("❌ Failed to fetch gift cards:", error);
     return [];
   }
 }

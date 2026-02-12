@@ -14,7 +14,13 @@ import {
 import { authenticate } from "../shopify.server";
 import Video from "../models/video.server";
 import { deleteFileFromGridFS } from "../services/gridfs.server";
-import { createShopifyGiftCard, saveGiftCardRecord, markGiftCardEmailSent } from "../models/giftcard.server";
+import { 
+    createShopifyGiftCard, 
+    saveGiftCardRecord, 
+    markGiftCardEmailSent,
+    getGiftCardCodeREST ,
+    findOrCreateCustomer 
+} from "../models/giftcard.server";
 import { sendGiftCardEmail } from "../services/email.server";
 import connection from "../db.server";
 
@@ -66,92 +72,168 @@ export const action = async ({ request }) => {
 
             // Attempt to create and send gift card
             let giftCardResult = null;
-            console.log("Gift card feature enabled:", process.env.ENABLE_GIFT_CARDS === "true");
-            console.log("Admin client available:", !!admin);
+            console.log("🎁 Gift card feature enabled:", process.env.ENABLE_GIFT_CARDS === "true");
+            console.log("🔑 Admin client available:", !!admin);
             
             if (process.env.ENABLE_GIFT_CARDS === "true" && admin) {
                 try {
-                    // Get gift card reward amount from env (default $10)
-                    const giftCardAmount = parseFloat(process.env.GIFT_CARD_AMOUNT || "10");
-                    const giftCardValueCents = Math.round(giftCardAmount * 100);
+        const giftCardAmount = parseFloat(process.env.GIFT_CARD_AMOUNT || "10");
+        const giftCardValueCents = Math.round(giftCardAmount * 100);
 
-                    console.log("Creating gift card with amount:", giftCardAmount);
+        console.log("💰 Creating gift card with amount: $" + giftCardAmount);
 
-                    // Create gift card via Shopify Admin API
-                    const shopifyGiftCard = await createShopifyGiftCard({
-                        shopifyClient: admin.graphql,
-                        initialBalance: giftCardAmount,
-                        currency: process.env.GIFT_CARD_CURRENCY || "USD",
+        // Optional: Find or create customer to link gift card
+                let customerId = null;
+                if (video.uploaderEmail && process.env.LINK_GIFT_CARD_TO_CUSTOMER === "true") {
+                    try {
+                        console.log("👤 Finding/creating customer for:", video.uploaderEmail);
+                        customerId = await findOrCreateCustomer({
+                            shopifyClient: admin.graphql,
+                            email: video.uploaderEmail,
+                            firstName: video.uploaderName || "",
+                            lastName: "",
+                        });
+                        console.log("👤 Customer ID:", customerId || "Not created");
+                    } catch (customerError) {
+                        console.warn("⚠️  Failed to create customer, proceeding without:", customerError.message);
+                    }
+                }
+
+                // Step 1: Create gift card via Shopify GraphQL API
+                const shopifyGiftCard = await createShopifyGiftCard({
+                    shopifyClient: async (query, options) => {
+                        const response = await admin.graphql(query, options);
+                        const json = await response.json();
+                        return json;
+                    },
+                    initialBalance: giftCardAmount,
+                    currency: process.env.GIFT_CARD_CURRENCY || "USD",
+                    note: `Video approval reward for ${video.uploaderName || 'user'}`,
+                    customerId: customerId,  // ← Pass customer ID (or null)
+                });
+
+                    if (!shopifyGiftCard || !shopifyGiftCard.id) {
+                        throw new Error("Gift card creation returned no valid data.");
+                    }
+
+                    console.log("✅ Gift card created in Shopify:", {
+                        id: shopifyGiftCard.id,
+                        lastCharacters: shopifyGiftCard.lastCharacters
                     });
 
-                    console.log("Gift card created successfully:", shopifyGiftCard);
+                    // Step 2: Get the full gift card code using REST API
+                    let fullGiftCardCode = null;
+                    try {
+                        console.log("🔍 Fetching full gift card code via REST API...");
+                        
+                        const giftCardDetails = await getGiftCardCodeREST({
+                            shop: session.shop,
+                            accessToken: session.accessToken,
+                            giftCardId: shopifyGiftCard.id
+                        });
 
-                    // Save gift card record to database
+                        fullGiftCardCode = giftCardDetails.code;
+                        console.log("✅ Full gift card code retrieved:", fullGiftCardCode);
+                    } catch (restError) {
+                        console.error("⚠️  Failed to retrieve full code via REST API:", restError.message);
+                        console.log("📝 Will use last characters instead");
+                        // Fallback to last characters if REST fails
+                        fullGiftCardCode = shopifyGiftCard.lastCharacters 
+                            ? `****${shopifyGiftCard.lastCharacters}` 
+                            : "PENDING";
+                    }
+
+                    // Step 3: Save gift card record to database
                     const giftCardRecord = await saveGiftCardRecord({
                         shop: session.shop,
                         videoId: videoId,
                         uploaderEmail: video.uploaderEmail,
                         uploaderName: video.uploaderName,
                         shopifyGiftCardId: shopifyGiftCard.id,
-                        giftCardCode: shopifyGiftCard.lastCharacters || "PENDING",
+                        giftCardCode: fullGiftCardCode,
+                        lastCharacters: shopifyGiftCard.lastCharacters,
                         giftCardValue: giftCardValueCents,
                         currency: process.env.GIFT_CARD_CURRENCY || "USD",
                     });
 
-                    // Update video with gift card info
+                    // Step 4: Update video with gift card info
                     video.giftCardCreated = true;
                     video.giftCardId = giftCardRecord._id.toString();
                     await video.save();
 
-                    console.log("Video updated with gift card:", video.giftCardCreated, video.giftCardId);
+                    console.log("📊 Video updated with gift card:", {
+                        giftCardCreated: video.giftCardCreated,
+                        giftCardId: video.giftCardId
+                    });
 
-                    // Send email with gift card details
+                    // Step 5: Send email with gift card details
+                    console.log("📧 Email Configuration Check:");
+                    console.log("  - Uploader Email:", video.uploaderEmail || "❌ MISSING");
+                    console.log("  - ENABLE_GIFT_CARD_EMAIL:", process.env.ENABLE_GIFT_CARD_EMAIL);
+                    console.log("  - SMTP_HOST:", process.env.SMTP_HOST ? "✓ Set" : "✗ Missing");
+                    console.log("  - SMTP_USER:", process.env.SMTP_USER ? "✓ Set" : "✗ Missing");
+                    console.log("  - SMTP_PASS:", process.env.SMTP_PASS ? "✓ Set" : "✗ Missing");
+                    
                     if (video.uploaderEmail && process.env.ENABLE_GIFT_CARD_EMAIL === "true") {
                         try {
-                            console.log("Sending email to:", video.uploaderEmail);
+                            console.log("🚀 Attempting to send email to:", video.uploaderEmail);
+                            
                             await sendGiftCardEmail({
                                 email: video.uploaderEmail,
-                                uploaderName: video.uploaderName,
-                                giftCardCode: shopifyGiftCard.lastCharacters || "PENDING",
-                                giftCardValue: giftCardValueCents,
+                                uploaderName: video.uploaderName || "Valued Customer",
+                                giftCardCode: fullGiftCardCode,
+                                // FIX: Pass the dollar amount directly, not cents
+                                giftCardAmount: giftCardAmount, 
                                 shopName: process.env.SHOPIFY_SHOP_NAME || session.shop,
                                 shopDomain: session.shop,
                             });
 
-                            // Mark email as sent
+                            // Mark email as sent in Database
                             video.giftCardEmailSent = true;
                             await video.save();
                             await markGiftCardEmailSent(giftCardRecord._id.toString(), true);
 
-                            console.log("Email sent successfully");
+                            console.log("✅ Email sent successfully to:", video.uploaderEmail);
 
                             giftCardResult = {
                                 created: true,
                                 emailSent: true,
-                                giftCardCode: shopifyGiftCard.lastCharacters,
+                                giftCardCode: fullGiftCardCode,
                                 message: "Gift card created and email sent successfully"
                             };
                         } catch (emailError) {
-                            console.warn("Failed to send gift card email:", emailError);
+                            console.error("❌ Failed to send gift card email (Action Layer):");
+                            console.error("   Error Message:", emailError.message);
+                            
+                            // Don't fail the whole request, just mark email as failed
                             giftCardResult = {
                                 created: true,
                                 emailSent: false,
-                                giftCardCode: shopifyGiftCard.lastCharacters,
+                                giftCardCode: fullGiftCardCode,
                                 message: "Gift card created but email failed to send",
                                 emailError: emailError.message
                             };
                         }
                     } else {
-                        console.log("Email not sent - email disabled or no email address");
+                        const reasons = [];
+                        if (!video.uploaderEmail) reasons.push("no email address");
+                        if (process.env.ENABLE_GIFT_CARD_EMAIL !== "true") reasons.push("email disabled in config");
+                        
+                        console.log("⏭️  Email skipped - " + reasons.join(" | "));
+                        
                         giftCardResult = {
                             created: true,
                             emailSent: false,
-                            giftCardCode: shopifyGiftCard.lastCharacters,
-                            message: "Gift card created (email delivery disabled or no email address)"
+                            giftCardCode: fullGiftCardCode,
+                            message: "Gift card created (email: " + reasons.join(", ") + ")"
                         };
                     }
                 } catch (giftCardError) {
-                    console.error("Failed to create gift card:", giftCardError);
+                    console.error("❌ Failed to create gift card:");
+                    console.error("   Error Message:", giftCardError.message);
+                    console.error("   Error Stack:", giftCardError.stack);
+                    console.error("   Full Error:", giftCardError);
+                    
                     // Video is still approved even if gift card creation fails
                     giftCardResult = {
                         created: false,
@@ -160,7 +242,8 @@ export const action = async ({ request }) => {
                     };
                 }
             } else {
-                console.log("Skipping gift card - feature disabled or no admin client");
+                const reason = !admin ? "no admin client" : "feature disabled";
+                console.log(`⏭️  Skipping gift card - ${reason}`);
             }
 
             return json({
@@ -169,8 +252,10 @@ export const action = async ({ request }) => {
                 giftCardResult
             });
         } catch (error) {
-            console.error("Error approving video:", error);
-            return json({ error: "Failed to approve video: " + error.message }, { status: 500 });
+            console.error("❌ Error approving video:", error);
+            return json({ 
+                error: "Failed to approve video: " + error.message 
+            }, { status: 500 });
         }
     }
 
@@ -180,15 +265,19 @@ export const action = async ({ request }) => {
             if (video) {
                 try {
                     await deleteFileFromGridFS(video.fileId);
+                    console.log("✅ GridFS file deleted:", video.fileId);
                 } catch (e) {
-                    console.warn("GridFS delete failed", e);
+                    console.warn("⚠️  GridFS delete failed (file may not exist):", e.message);
                 }
                 await Video.deleteOne({ _id: videoId });
+                console.log("✅ Video deleted from database:", videoId);
             }
             return json({ success: true, message: "Video deleted" });
         } catch (error) {
-            console.error("Error deleting video:", error);
-            return json({ error: "Failed to delete video: " + error.message }, { status: 500 });
+            console.error("❌ Error deleting video:", error);
+            return json({ 
+                error: "Failed to delete video: " + error.message 
+            }, { status: 500 });
         }
     }
 
@@ -199,8 +288,6 @@ export default function Index() {
     const { videos } = useLoaderData();
     const fetcher = useFetcher();
 
-    console.log("Loaded videos:", videos);
-
     const handleAction = (id, intent) => {
         fetcher.submit({ id, intent }, { method: "POST" });
     };
@@ -208,10 +295,9 @@ export default function Index() {
     const { selectedResources, allResourcesSelected, handleSelectionChange } =
         useIndexResourceState(videos);
 
-
     const rowMarkup = videos.map(
         (
-            { id, _videoTitle, thumbnailLink, uploaderName, uploaderEmail, status, createdAt, giftCardCreated, giftCardEmailSent },
+            { id, thumbnailLink, uploaderName, uploaderEmail, status, createdAt, giftCardCreated, giftCardEmailSent },
             index,
         ) => (
             <IndexTable.Row
@@ -226,16 +312,22 @@ export default function Index() {
                         <Thumbnail source="video" alt="Video" />
                     }
                 </IndexTable.Cell>
-                <IndexTable.Cell>{new Date(createdAt).toLocaleDateString()}</IndexTable.Cell>
+                <IndexTable.Cell>
+                    {new Date(createdAt).toLocaleDateString()}
+                </IndexTable.Cell>
                 <IndexTable.Cell>{uploaderName}</IndexTable.Cell>
                 <IndexTable.Cell>{uploaderEmail}</IndexTable.Cell>
                 <IndexTable.Cell>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                         <div>
-                            {status === "approved" ? <Badge status="success" tone="success">Approved</Badge> : <Badge status="attention" tone="attention">Pending</Badge>}
+                            {status === "approved" ? (
+                                <Badge status="success" tone="success">Approved</Badge>
+                            ) : (
+                                <Badge status="attention" tone="attention">Pending</Badge>
+                            )}
                         </div>
                         {giftCardCreated && (
-                            <div title={giftCardEmailSent ? "Gift card sent" : "Gift card created (email pending)"}>
+                            <div title={giftCardEmailSent ? "Gift card sent via email" : "Gift card created (email pending)"}>
                                 {giftCardEmailSent ? (
                                     <Badge status="success" tone="success">🎁 Sent</Badge>
                                 ) : (
@@ -247,14 +339,25 @@ export default function Index() {
                 </IndexTable.Cell>
                 <IndexTable.Cell>
                     <InlineStack gap="300">
-                    {status !== "approved" && (
-                        <Button onClick={() => handleAction(id, "approve")} size="slim" loading={fetcher.state !== "idle"} tone="success">
-                            Approve
+                        {status !== "approved" && (
+                            <Button 
+                                onClick={() => handleAction(id, "approve")} 
+                                size="slim" 
+                                loading={fetcher.state !== "idle" && fetcher.formData?.get("id") === id} 
+                                tone="success"
+                            >
+                                Approve
+                            </Button>
+                        )}
+                        <Button 
+                            onClick={() => handleAction(id, "delete")} 
+                            size="slim" 
+                            loading={fetcher.state !== "idle" && fetcher.formData?.get("id") === id} 
+                            tone="critical" 
+                            variant="plain"
+                        >
+                            Delete
                         </Button>
-                    )}
-                    <Button onClick={() => handleAction(id, "delete")} size="slim" destructive loading={fetcher.state !== "idle"} tone="critical" variant="plain">
-                        Delete
-                    </Button>
                     </InlineStack>
                 </IndexTable.Cell>
             </IndexTable.Row>
@@ -274,10 +377,10 @@ export default function Index() {
                             }
                             onSelectionChange={handleSelectionChange}
                             headings={[
-                                { title: 'Video Thumbnail' },
+                                { title: 'Thumbnail' },
                                 { title: 'Upload Date' },
-                                { title: 'Uploader Name' },
-                                { title: 'Uploader Email' },
+                                { title: 'Uploader' },
+                                { title: 'Email' },
                                 { title: 'Status' },
                                 { title: 'Actions' },
                             ]}
