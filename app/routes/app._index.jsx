@@ -72,54 +72,45 @@ export const action = async ({ request }) => {
 
             // Attempt to create and send gift card
             let giftCardResult = null;
-            console.log("🎁 Gift card feature enabled:", process.env.ENABLE_GIFT_CARDS === "true");
-            console.log("🔑 Admin client available:", !!admin);
             
             if (process.env.ENABLE_GIFT_CARDS === "true" && admin) {
                 try {
-        const giftCardAmount = parseFloat(process.env.GIFT_CARD_AMOUNT || "10");
-        const giftCardValueCents = Math.round(giftCardAmount * 100);
+                    const giftCardAmount = parseFloat(process.env.GIFT_CARD_AMOUNT || "10");
+                    const giftCardValueCents = Math.round(giftCardAmount * 100);
 
-        console.log("💰 Creating gift card with amount: $" + giftCardAmount);
+                    console.log("💰 Creating gift card for video approval: $" + giftCardAmount);
 
-        // Optional: Find or create customer to link gift card
-                let customerId = null;
-                if (video.uploaderEmail && process.env.LINK_GIFT_CARD_TO_CUSTOMER === "true") {
-                    try {
-                        console.log("👤 Finding/creating customer for:", video.uploaderEmail);
-                        customerId = await findOrCreateCustomer({
-                            shopifyClient: admin.graphql,
-                            email: video.uploaderEmail,
-                            firstName: video.uploaderName || "",
-                            lastName: "",
-                        });
-                        console.log("👤 Customer ID:", customerId || "Not created");
-                    } catch (customerError) {
-                        console.warn("⚠️  Failed to create customer, proceeding without:", customerError.message);
+                    // Optional: Find or create customer to link gift card
+                    let customerId = null;
+                    if (video.uploaderEmail && process.env.LINK_GIFT_CARD_TO_CUSTOMER === "true") {
+                        try {
+                            customerId = await findOrCreateCustomer({
+                                shopifyClient: admin.graphql,
+                                email: video.uploaderEmail,
+                                firstName: video.uploaderName || "",
+                                lastName: "",
+                            });
+                        } catch (customerError) {
+                            console.warn("⚠️  Failed to create customer:", customerError.message);
+                        }
                     }
-                }
 
-                // Step 1: Create gift card via Shopify GraphQL API
-                const shopifyGiftCard = await createShopifyGiftCard({
-                    shopifyClient: async (query, options) => {
-                        const response = await admin.graphql(query, options);
-                        const json = await response.json();
-                        return json;
-                    },
-                    initialBalance: giftCardAmount,
-                    currency: process.env.GIFT_CARD_CURRENCY || "USD",
-                    note: `Video approval reward for ${video.uploaderName || 'user'}`,
-                    customerId: customerId,  // ← Pass customer ID (or null)
-                });
+                    // Step 1: Create gift card via Shopify GraphQL API
+                    const shopifyGiftCard = await createShopifyGiftCard({
+                        shopifyClient: async (query, options) => {
+                            const response = await admin.graphql(query, options);
+                            const json = await response.json();
+                            return json;
+                        },
+                        initialBalance: giftCardAmount,
+                        currency: process.env.GIFT_CARD_CURRENCY || "USD",
+                        note: `Video approval reward for ${video.uploaderName || 'user'}`,
+                        customerId: customerId,
+                    });
 
                     if (!shopifyGiftCard || !shopifyGiftCard.id) {
                         throw new Error("Gift card creation returned no valid data.");
                     }
-
-                    console.log("✅ Gift card created in Shopify:", {
-                        id: shopifyGiftCard.id,
-                        lastCharacters: shopifyGiftCard.lastCharacters
-                    });
 
                     // Step 2: Get the full gift card code using REST API
                     let fullGiftCardCode = null;
@@ -135,12 +126,14 @@ export const action = async ({ request }) => {
                         fullGiftCardCode = giftCardDetails.code;
                         console.log("✅ Full gift card code retrieved:", fullGiftCardCode);
                     } catch (restError) {
-                        console.error("⚠️  Failed to retrieve full code via REST API:", restError.message);
-                        console.log("📝 Will use last characters instead");
-                        // Fallback to last characters if REST fails
-                        fullGiftCardCode = shopifyGiftCard.lastCharacters 
-                            ? `****${shopifyGiftCard.lastCharacters}` 
-                            : "PENDING";
+                        console.error("⚠️ Failed to retrieve full code via REST API:", restError.message);
+                    }
+
+                    // 🛡️ SECURITY FALLBACK: If REST API failed to get the code, 
+                    // use masked characters so we don't send 'undefined' in the email.
+                    if (!fullGiftCardCode) {
+                        console.log("📝 Falling back to masked code:", shopifyGiftCard.lastCharacters);
+                        fullGiftCardCode = `****${shopifyGiftCard.lastCharacters}`;
                     }
 
                     // Step 3: Save gift card record to database
@@ -161,39 +154,28 @@ export const action = async ({ request }) => {
                     video.giftCardId = giftCardRecord._id.toString();
                     await video.save();
 
-                    console.log("📊 Video updated with gift card:", {
-                        giftCardCreated: video.giftCardCreated,
-                        giftCardId: video.giftCardId
-                    });
+                    console.log("📊 Video updated with gift card:", video.giftCardId);
 
                     // Step 5: Send email with gift card details
-                    console.log("📧 Email Configuration Check:");
-                    console.log("  - Uploader Email:", video.uploaderEmail || "❌ MISSING");
-                    console.log("  - ENABLE_GIFT_CARD_EMAIL:", process.env.ENABLE_GIFT_CARD_EMAIL);
-                    console.log("  - SMTP_HOST:", process.env.SMTP_HOST ? "✓ Set" : "✗ Missing");
-                    console.log("  - SMTP_USER:", process.env.SMTP_USER ? "✓ Set" : "✗ Missing");
-                    console.log("  - SMTP_PASS:", process.env.SMTP_PASS ? "✓ Set" : "✗ Missing");
-                    
                     if (video.uploaderEmail && process.env.ENABLE_GIFT_CARD_EMAIL === "true") {
                         try {
-                            console.log("🚀 Attempting to send email to:", video.uploaderEmail);
+                            console.log("📧 Attempting to send email to:", video.uploaderEmail);
                             
                             await sendGiftCardEmail({
                                 email: video.uploaderEmail,
                                 uploaderName: video.uploaderName || "Valued Customer",
                                 giftCardCode: fullGiftCardCode,
-                                // FIX: Pass the dollar amount directly, not cents
                                 giftCardAmount: giftCardAmount, 
                                 shopName: process.env.SHOPIFY_SHOP_NAME || session.shop,
                                 shopDomain: session.shop,
                             });
 
-                            // Mark email as sent in Database
+                            // Mark email as sent
                             video.giftCardEmailSent = true;
                             await video.save();
                             await markGiftCardEmailSent(giftCardRecord._id.toString(), true);
 
-                            console.log("✅ Email sent successfully to:", video.uploaderEmail);
+                            console.log("✅ Email sent successfully");
 
                             giftCardResult = {
                                 created: true,
@@ -202,10 +184,8 @@ export const action = async ({ request }) => {
                                 message: "Gift card created and email sent successfully"
                             };
                         } catch (emailError) {
-                            console.error("❌ Failed to send gift card email (Action Layer):");
-                            console.error("   Error Message:", emailError.message);
+                            console.error("❌ Failed to send gift card email:", emailError.message);
                             
-                            // Don't fail the whole request, just mark email as failed
                             giftCardResult = {
                                 created: true,
                                 emailSent: false,
@@ -215,26 +195,17 @@ export const action = async ({ request }) => {
                             };
                         }
                     } else {
-                        const reasons = [];
-                        if (!video.uploaderEmail) reasons.push("no email address");
-                        if (process.env.ENABLE_GIFT_CARD_EMAIL !== "true") reasons.push("email disabled in config");
-                        
-                        console.log("⏭️  Email skipped - " + reasons.join(" | "));
-                        
+                        console.log("⏭️ Email skipped (disabled or no email)");
                         giftCardResult = {
                             created: true,
                             emailSent: false,
                             giftCardCode: fullGiftCardCode,
-                            message: "Gift card created (email: " + reasons.join(", ") + ")"
+                            message: "Gift card created (email skipped)"
                         };
                     }
                 } catch (giftCardError) {
-                    console.error("❌ Failed to create gift card:");
-                    console.error("   Error Message:", giftCardError.message);
-                    console.error("   Error Stack:", giftCardError.stack);
-                    console.error("   Full Error:", giftCardError);
+                    console.error("❌ Failed to create gift card:", giftCardError.message);
                     
-                    // Video is still approved even if gift card creation fails
                     giftCardResult = {
                         created: false,
                         error: giftCardError.message,
@@ -242,8 +213,7 @@ export const action = async ({ request }) => {
                     };
                 }
             } else {
-                const reason = !admin ? "no admin client" : "feature disabled";
-                console.log(`⏭️  Skipping gift card - ${reason}`);
+                console.log("⏭️ Skipping gift card - disabled or no admin client");
             }
 
             return json({
@@ -265,12 +235,10 @@ export const action = async ({ request }) => {
             if (video) {
                 try {
                     await deleteFileFromGridFS(video.fileId);
-                    console.log("✅ GridFS file deleted:", video.fileId);
                 } catch (e) {
-                    console.warn("⚠️  GridFS delete failed (file may not exist):", e.message);
+                    console.warn("⚠️  GridFS delete failed:", e.message);
                 }
                 await Video.deleteOne({ _id: videoId });
-                console.log("✅ Video deleted from database:", videoId);
             }
             return json({ success: true, message: "Video deleted" });
         } catch (error) {
